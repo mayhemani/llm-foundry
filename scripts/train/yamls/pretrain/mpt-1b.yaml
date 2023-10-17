@@ -18,6 +18,7 @@ model:
   vocab_size: 50368
   attn_config:
     attn_impl: triton
+    rope: true
 
 # Tokenizer
 tokenizer:

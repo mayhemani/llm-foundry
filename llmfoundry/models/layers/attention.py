@@ -16,6 +16,36 @@ from torch import nn
 from llmfoundry.models.layers.fc import FC_CLASS_REGISTRY
 from llmfoundry.models.layers.norm import NORM_CLASS_REGISTRY
 
+# the following code was rewritten from llama's implementation for rotary-embedding
+# which, no doubt borrows it from another model.
+
+def init_complex_exponentials(dim_by_heads: int, max_seq_len: int, scaling_factor: float = 10000.0) -> torch.Tensor:
+    half_dim_by_heads:int = dim_by_heads//2
+    exps: torch.Tensor = 1.0 / (scaling_factor ** (torch.arange(0, dim_by_heads, 2)[:half_dim_by_heads].float() / dim_by_heads))
+    t: torch.Tensor = torch.arange(max_seq_len, device = exps.device)
+    exps = torch.outer(t, exps).float()
+    return torch.polar(torch.ones_like(exps), exps)
+
+def to_complex_rep(x: torch.Tensor) -> torch.Tensor:
+    return torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
+
+def to_original_rep(x: torch.Tensor):
+    return torch.view_as_real(x).flatten(3)
+
+def apply_rope(query: torch.Tensor, key: torch.Tensor, exps: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    query_c = to_complex_rep(query)
+    key_c = to_complex_rep(key)
+    
+    ndim = len(query_c.shape)
+    shape = [d if ((i == 1) or (i == (ndim - 1))) else 1 for (i, d) in enumerate(query_c.shape)]
+    factor = exps.view(*shape).to(query.device)
+
+    query = to_original_rep(query_c * factor).type_as(query)
+    key = to_original_rep(key_c * factor).type_as(key)
+
+    return query, key
+    
+
 
 def is_flash_v2_installed():
     try:
@@ -479,6 +509,8 @@ class GroupedQueryAttention(nn.Module):
         fc_type: str = 'torch',
         device: Optional[str] = None,
         bias: bool = True,
+        rope: bool = False,
+        rotation_freqs: torch.Tensor = None,
     ):
         super().__init__()
 
@@ -548,6 +580,8 @@ class GroupedQueryAttention(nn.Module):
             **fc_kwargs,
         )
         self.out_proj._is_residual = True
+        self.rotation_freqs = rotation_freqs
+        self.rope = rope
 
     def forward(
         self,
@@ -572,6 +606,20 @@ class GroupedQueryAttention(nn.Module):
             ],
             dim=2,
         )
+
+        
+
+        if self.rope:
+            # current shape is (bsz, seqlen, dim)
+            # rope expects (bsz, seqlen, n_heads, dim//n_heads)
+            query, key = apply_rope(
+                        query.view(query.shape[0], query.shape[1], self.kv_n_heads, self.head_dim),
+                        key.view(key.shape[0], key.shape[1], self.kv_n_heads, self.head_dim),
+                        exps = self.rotation_freqs
+                    )
+            query = query.view(query.shape[0], query.shape[1], query.shape[-2]*query.shape[-1])
+            key = key.view(key.shape[0], key.shape[1], key.shape[-2]*key.shape[-1])
+
 
         key_padding_mask = attention_mask
 
@@ -620,6 +668,8 @@ class MultiheadAttention(GroupedQueryAttention):
         fc_type: str = 'torch',
         device: Optional[str] = None,
         bias: bool = True,
+        rope: bool = False,
+        rotation_freqs: torch.Tensor = None, 
     ):
         super().__init__(
             d_model=d_model,
@@ -634,6 +684,8 @@ class MultiheadAttention(GroupedQueryAttention):
             fc_type=fc_type,
             device=device,
             bias=bias,
+            rope=rope,
+            rotation_freqs=rotation_freqs,
         )
 
 
@@ -657,6 +709,8 @@ class MultiQueryAttention(GroupedQueryAttention):
         fc_type: str = 'torch',
         device: Optional[str] = None,
         bias: bool = True,
+        rope: bool = False,
+        rotation_freqs: torch.Tensor = None,
     ):
         super().__init__(
             d_model=d_model,
@@ -671,6 +725,8 @@ class MultiQueryAttention(GroupedQueryAttention):
             fc_type=fc_type,
             device=device,
             bias=bias,
+            rope=rope,
+            rotation_freqs=rotation_freqs
         )
 
 

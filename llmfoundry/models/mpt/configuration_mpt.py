@@ -154,6 +154,13 @@ class MPTConfig(PretrainedConfig):
             self.learned_pos_emb = False
             warnings.warn(
                 f'alibi is turned on, setting `learned_pos_emb` to `False.`')
+        
+        # rope configuration enabled?    
+        self.rope = self.attn_config.get('rope', False)
+        if self.rope:
+            self.learned_pos_emb = False
+            warnings.warn(f"RoPE is turned on, setting `learned_pos_emb` to `False`.")
+            
         super().__init__(**kwargs)
 
         self._validate_config()

@@ -29,7 +29,7 @@ from transformers import PreTrainedModel, PreTrainedTokenizerBase
 from transformers.modeling_outputs import (BaseModelOutputWithPast,
                                            CausalLMOutputWithPast)
 
-from llmfoundry.models.layers.attention import attn_bias_shape, build_attn_bias
+from llmfoundry.models.layers.attention import attn_bias_shape, build_attn_bias, init_complex_exponentials
 from llmfoundry.models.layers.blocks import MPTBlock
 from llmfoundry.models.layers.custom_embedding import SharedEmbedding
 from llmfoundry.models.layers.fc import FC_CLASS_REGISTRY as FC_CLASS_REGISTRY
@@ -69,7 +69,6 @@ import logging
 
 log = logging.getLogger(__name__)
 
-
 class MPTPreTrainedModel(PreTrainedModel):
     config_class = MPTConfig
     base_model_prefix = 'model'
@@ -87,6 +86,14 @@ class MPTModel(MPTPreTrainedModel):
         self.attn_uses_sequence_id = config.attn_config['attn_uses_sequence_id']
         self.alibi = config.attn_config['alibi']
         self.alibi_bias_max = config.attn_config['alibi_bias_max']
+        self.rope = config.attn_config.get('rope', False)
+        if self.rope:
+            self.rotation_freqs = init_complex_exponentials(
+                                        config.d_model//config.n_heads,
+                                        config.max_seq_len
+                                    )
+        else:
+            self.rotation_freqs = None
 
         self.learned_pos_emb = config.learned_pos_emb
 
@@ -118,6 +125,7 @@ class MPTModel(MPTPreTrainedModel):
         self.blocks = nn.ModuleList([
             MPTBlock(
                 device=config.init_device,
+                rotation_freqs = self.rotation_freqs,
                 **config.to_dict(),
             ) for _ in range(config.n_layers)
         ])

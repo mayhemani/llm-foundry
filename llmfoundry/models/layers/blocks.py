@@ -12,7 +12,6 @@ from llmfoundry.models.layers.attention import ATTN_CLASS_REGISTRY
 from llmfoundry.models.layers.ffn import FFN_CLASS_REGISTRY, build_ffn
 from llmfoundry.models.layers.norm import NORM_CLASS_REGISTRY
 
-
 class MPTBlock(nn.Module):
 
     def __init__(
@@ -27,6 +26,8 @@ class MPTBlock(nn.Module):
         fc_type: str = 'torch',
         device: Optional[str] = None,
         no_bias: bool = False,
+        rope: bool = False,
+        rotation_freqs: torch.Tensor = None,
         **kwargs: Any,
     ):
         if attn_config is None:
@@ -74,6 +75,7 @@ class MPTBlock(nn.Module):
             device=device,
             **attn_config_subset_for_attn_class,
             bias=not no_bias,
+            rotation_freqs=rotation_freqs
         )
         self.norm_2 = None
         if not getattr(FFN_CLASS_REGISTRY[ffn_config['ffn_type']], '_has_norm',
